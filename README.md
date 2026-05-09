@@ -1,4 +1,4 @@
-# GCP GKE GitOps Blueprint
+# SRE GitOps
 
 Reference implementation for a multi-environment **GCP/GKE** delivery stack. The repository covers GKE provisioning with Terraform, container image build pipelines, Kubernetes deployment with Kustomize, and a GitHub Actions based CI/CD + GitOps workflow.
 
