@@ -1,0 +1,101 @@
+name: infra-apply-sync
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "infra/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  apply_and_open_pr:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, staging, prod]
+    environment: ${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform apply (${{ matrix.env }})
+        working-directory: infra/live/${{ matrix.env }}
+        run: |
+          terraform init
+          terraform apply -auto-approve
+
+      - name: Render infra auto patch (${{ matrix.env }})
+        working-directory: infra/live/${{ matrix.env }}
+        run: |
+          PROJECT_ID="$(terraform output -raw project_id)"
+          REGION="$(terraform output -raw region)"
+          CLUSTER_NAME="$(terraform output -raw gke_cluster_name)"
+          CLUSTER_LOCATION="$(terraform output -raw gke_cluster_location)"
+
+          CERTMAP_KEY="$(terraform output -raw cert_maps_config_key)"
+          GATEWAY_STATIC_ADDRESS="$(terraform output -raw gke_cluster_ip_name)"
+          DOMAIN_KEY="$(terraform output -raw domains_config_key)"
+
+          OUT_DIR="${GITHUB_WORKSPACE}/apps/k8s/overlays/${{ matrix.env }}"
+          mkdir -p "$OUT_DIR"
+
+          # Create a patch for gateway 
+          cat > "$OUT_DIR/infra.auto.gateway.patch.yaml" <<EOF
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: Gateway
+          metadata:
+            name: nginx-gateway
+            annotations:
+              networking.gke.io/certmap: "${CERTMAP_KEY}"
+          spec:
+            addresses:
+              - type: NamedAddress
+                value: "${GATEWAY_STATIC_ADDRESS}"
+          EOF
+
+          # Create a patch for route
+          cat > "$OUT_DIR/infra.auto.route.patch.yaml" <<EOF
+          apiVersion: gateway.networking.k8s.io/v1
+          kind: HTTPRoute
+          metadata:
+            name: nginx-route
+          spec:
+            hostnames:
+              - "${DOMAIN_KEY}"   
+          EOF
+
+          # Cluster metadata for deploy workflow 
+          cat > "$OUT_DIR/infra.auto.env" <<EOF
+          PROJECT_ID=$PROJECT_ID
+          REGION=$REGION
+          CLUSTER_NAME=$CLUSTER_NAME
+          CLUSTER_LOCATION=$CLUSTER_LOCATION
+          EOF
+
+      - name: Create Pull Request for infra sync (${{ matrix.env }})
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: infra-sync/${{ matrix.env }}/${{ github.run_id }}
+          title: "infra(${{ matrix.env }}): sync outputs to k8s overlays"
+          commit-message: "infra(${{ matrix.env }}): sync outputs [skip ci]"
+          body: |
+            This PR is auto-generated after Terraform apply.
+            It syncs Terraform outputs into:
+            - apps/k8s/overlays/${{ matrix.env }}/infra.auto.gateway.patch.yaml
+            - apps/k8s/overlays/${{ matrix.env }}/infra.auto.route.patch.yaml
+            - apps/k8s/overlays/${{ matrix.env }}/infra.auto.env
+          add-paths: |
+            apps/k8s/overlays/${{ matrix.env }}/infra.auto.gateway.patch.yaml
+            apps/k8s/overlays/${{ matrix.env }}/infra.auto.route.patch.yaml
+            apps/k8s/overlays/${{ matrix.env }}/infra.auto.env

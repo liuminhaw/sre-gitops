@@ -1,0 +1,42 @@
+name: Test GCP WIF
+
+on:
+  workflow_dispatch:   
+  # push:
+  #   branches:
+  #     - main
+
+permissions:
+  contents: read
+  id-token: write   # Required for OIDC authentication
+
+jobs:
+  test-auth:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Make sure GitHub provides the OIDC token request URL and token as environment variables
+      - name: Debug OIDC variables
+        run: |
+          echo "ACTIONS_ID_TOKEN_REQUEST_URL=$ACTIONS_ID_TOKEN_REQUEST_URL"
+          echo "ACTIONS_ID_TOKEN_REQUEST_TOKEN=$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+
+      # Use WIF to exchange GCP credential
+      - name: Authenticate to GCP via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      # Setup gcloud
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Verify authentication by listing GCP projects
+      - name: Check gcloud auth
+        run: |
+          gcloud auth list
+          gcloud config list

@@ -1,0 +1,7 @@
+terraform {
+  backend "gcs" {
+    bucket = "sre-haw-terraform-state"
+    prefix = "dev/sre-gitops"
+  }
+}
+

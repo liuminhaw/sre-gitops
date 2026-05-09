@@ -1,0 +1,62 @@
+kind: Gateway
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: nginx-gateway
+  annotations:
+    # 引用你的 Certificate Manager Map
+    networking.gke.io/certmap: "certs-map-placeholder"
+spec:
+  # 使用 GKE 全球外部管理型負載平衡器
+  gatewayClassName: gke-l7-global-external-managed
+  # 綁定你預先保留的「全域」靜態 IP 名稱（GCE Address name）。
+  addresses:
+  - type: NamedAddress
+    value: gke-blueprint-example-ip
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same
+  - name: https
+    protocol: HTTPS
+    port: 443
+    allowedRoutes:
+      namespaces:
+        from: Same # 允許同一個 Namespace 的 Route 進行綁定
+
+---
+
+# 2. 定義 HTTPRoute：這負責將流量導向 Service
+kind: HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: nginx-route
+spec:
+  parentRefs:
+  - name: nginx-gateway # 關聯到上面定義的 Gateway
+    sectionName: https
+  hostnames:
+  - "domain.placeholder" 
+  rules:
+  - backendRefs:
+    - name: nginx-service
+      port: 80
+
+---
+
+kind: HTTPRoute
+apiVersion: gateway.networking.k8s.io/v1
+metadata:
+  name: nginx-route-redirect
+spec:
+  parentRefs:
+  - name: nginx-gateway
+    sectionName: http # 強制綁定到 Gateway 的 http 監聽器
+  rules:
+  - filters:
+    - type: RequestRedirect
+      requestRedirect:
+        scheme: https
+        statusCode: 301

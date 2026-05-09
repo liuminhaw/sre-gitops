@@ -1,0 +1,17 @@
+# nginx-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  annotations:
+    # 這是關鍵：告訴 GKE 使用 Network Endpoint Groups (NEG)
+    # 這樣 L7 LB 才能直接將流量導向 Pod，效能更好且支援容器原生負載平衡
+    # cloud.google.com/neg: '{"ingress": true}'
+    cloud.google.com/neg: '{"exposed_ports":{"80":{}}}'
+spec:
+  type: ClusterIP # L7 Ingress 通常搭配 ClusterIP 即可
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80

@@ -1,0 +1,235 @@
+name: deploy
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/**/overlays/**"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.filter.outputs.dev }}
+      staging: ${{ steps.filter.outputs.staging }}
+      prod: ${{ steps.filter.outputs.prod }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            dev:
+              - 'apps/k8s/overlays/dev/**'
+            staging:
+              - 'apps/k8s/overlays/staging/**'
+            prod:
+              - 'apps/k8s/overlays/prod/**'
+
+  deploy_dev:
+    needs: changes
+    if: needs.changes.outputs.dev == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load infra env file
+        run: |
+          set -a
+          source apps/k8s/overlays/dev/infra.auto.env
+          set +a
+          echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "CLUSTER_LOCATION=$CLUSTER_LOCATION" >> $GITHUB_ENV
+
+      - name: Extract namespace from kustomization
+        id: dev_ns
+        run: |
+          set -euo pipefail
+
+          KUSTOMIZATION="apps/k8s/overlays/dev/kustomization.yaml"
+          if [ ! -f "$KUSTOMIZATION" ]; then
+            echo "Missing kustomization.yaml/yml under apps/k8s/overlays/dev" >&2
+            exit 1
+          fi
+          NAMESPACE="$(awk '/^namespace:[[:space:]]*/ {print $2; exit}' "$KUSTOMIZATION" || true)"
+          if [ -z "${NAMESPACE}" ]; then
+            echo "No namespace specified in kustomization."
+            exit 1
+          fi
+
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "$CLUSTER_NAME" --location "$CLUSTER_LOCATION" --project "$PROJECT_ID"
+
+      - name: Ensure namespace exists (dev)
+        env:
+          NAMESPACE: ${{ steps.dev_ns.outputs.namespace }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy (dev)
+        run: |
+          kubectl diff -k apps/k8s/overlays/dev || true
+          kubectl apply -k apps/k8s/overlays/dev
+
+  deploy_staging:
+    needs: changes
+    if: needs.changes.outputs.staging == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load infra env file
+        run: |
+          set -a
+          source apps/k8s/overlays/staging/infra.auto.env
+          set +a
+          echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "CLUSTER_LOCATION=$CLUSTER_LOCATION" >> $GITHUB_ENV
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Set gcloud project
+        run: |
+          gcloud config set project "$PROJECT_ID"
+
+      - name: Extract image info from kustomization
+        id: image
+        run: |
+          set -euo pipefail
+
+          KUSTOMIZATION="apps/k8s/overlays/staging/kustomization.yaml"
+          if [ ! -f "$KUSTOMIZATION" ]; then
+            echo "Missing kustomization.yaml/yml under apps/k8s/overlays/staging" >&2
+            exit 1
+          fi
+
+          IMAGE_REPO="$(awk '/newName:/ {print $2; exit}' "$KUSTOMIZATION")"
+          IMAGE_TAG="$(awk '/newTag:/ {print $2; exit}' "$KUSTOMIZATION")"
+          if [ -z "$IMAGE_REPO" ] || [ -z "$IMAGE_TAG" ]; then
+            echo "Failed to parse images.newName/newTag from $KUSTOMIZATION" >&2
+            exit 1
+          fi
+
+          NAMESPACE="$(awk '/^namespace:[[:space:]]*/ {print $2; exit}' "$KUSTOMIZATION" || true)"
+          if [ -z "${NAMESPACE}" ]; then
+            echo "No namespace specified in kustomization."
+            exit 1
+          fi
+
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+          echo "image_repo=$IMAGE_REPO" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Add extra image tag (staging)
+        env:
+          IMAGE_REPO: ${{ steps.image.outputs.image_repo }}
+          IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          EXTRA_TAG="$(date -u +v%Y.%m.%d.%H%M%S)"
+          gcloud artifacts docker tags add "${IMAGE_REPO}:${IMAGE_TAG}" "${IMAGE_REPO}:${EXTRA_TAG}"
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "$CLUSTER_NAME" --location "$CLUSTER_LOCATION" --project "$PROJECT_ID"
+
+      - name: Ensure namespace exists (staging)
+        env:
+          NAMESPACE: ${{ steps.image.outputs.namespace }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy (staging)
+        run: |
+          kubectl diff -k apps/k8s/overlays/staging || true
+          kubectl apply -k apps/k8s/overlays/staging
+
+  deploy_prod:
+    needs: changes
+    if: needs.changes.outputs.prod == 'true'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load infra env file
+        run: |
+          set -a
+          source apps/k8s/overlays/prod/infra.auto.env
+          set +a
+          echo "PROJECT_ID=$PROJECT_ID" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "CLUSTER_LOCATION=$CLUSTER_LOCATION" >> $GITHUB_ENV
+
+      - name: Extract namespace from kustomization
+        id: prod_ns
+        run: |
+          set -euo pipefail
+
+          KUSTOMIZATION="apps/k8s/overlays/prod/kustomization.yaml"
+          if [ ! -f "$KUSTOMIZATION" ]; then
+            echo "Missing kustomization.yaml/yml under apps/k8s/overlays/prod" >&2
+            exit 1
+          fi
+          NAMESPACE="$(awk '/^namespace:[[:space:]]*/ {print $2; exit}' "$KUSTOMIZATION" || true)"
+          if [ -z "${NAMESPACE}" ]; then
+            echo "No namespace specified in kustomization."
+            exit 1
+          fi
+
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "$CLUSTER_NAME" --location "$CLUSTER_LOCATION" --project "$PROJECT_ID"
+
+      - name: Ensure namespace exists (prod)
+        env:
+          NAMESPACE: ${{ steps.prod_ns.outputs.namespace }}
+        run: |
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy (prod)
+        run: |
+          kubectl diff -k apps/k8s/overlays/prod || true
+          kubectl apply -k apps/k8s/overlays/prod

@@ -1,0 +1,14 @@
+resources:
+  - ../../base
+
+namespace: sre-app
+
+patches:
+  - path: deployment-patch.yaml
+  - path: infra.auto.gateway.patch.yaml
+  - path: infra.auto.route.patch.yaml
+
+images:
+  - name: sre-app
+    newName: asia-east1-docker.pkg.dev/sre-haw-ops/apps/sre-app
+    newTag: xxxxxxxxx

@@ -1,0 +1,61 @@
+name: build-image-and-open-dev-pr
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/nginx/image/**"
+      - "apps/k8s/base/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  build_push_and_pr:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker auth for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ vars.REGISTRY_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build & Push
+        working-directory: apps/nginx/image
+        run: |
+          IMAGE="${{ vars.REGISTRY_REGION }}-docker.pkg.dev/${{ vars.REGISTRY_PROJECT_ID }}/${{ vars.REGISTRY_REPO }}/${{ github.event.repository.name }}"
+          TAG="${GITHUB_SHA}"
+          docker build -t "${IMAGE}:${TAG}" .
+          docker push "${IMAGE}:${TAG}"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          echo "TAG=$TAG" >> $GITHUB_ENV
+
+      - name: Update dev overlay image tag
+        working-directory: apps/k8s/overlays/dev
+        run: |
+          # Update Kustomize image tag in dev overlay
+          # Replace newTag line (simple + stable for assignment)
+          sed -i "s|^\([[:space:]]*newTag:[[:space:]]*\).*|\1${TAG}|" kustomization.yaml
+          # perl -0777 -i -pe 's/(newTag:\s*").*?(")/$1'"$ENV{TAG}"'$2/g' kustomization.yaml
+
+      - name: Create PR (promote to dev)
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: promote/dev/${{ github.sha }}
+          title: "promote(dev): nginx-sre image -> ${{ github.sha }}"
+          commit-message: "promote(dev): update image tag to ${{ github.sha }}"
+          body: |
+            Auto-generated PR to promote new image to dev.
+            Image: ${{ vars.REGISTRY_REGION }}-docker.pkg.dev/${{ vars.REGISTRY_PROJECT_ID }}/${{ vars.REGISTRY_REPO }}/${{ github.event.repository.name }}:${{ github.sha }}
+          add-paths: |
+            apps/k8s/overlays/dev/kustomization.yaml
