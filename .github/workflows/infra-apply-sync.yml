@@ -28,6 +28,8 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.9
 
       - name: Terraform apply (${{ matrix.env }})
         working-directory: infra/live/${{ matrix.env }}
