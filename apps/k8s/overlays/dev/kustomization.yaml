@@ -11,4 +11,4 @@ patches:
 images:
   - name: sre-app
     newName: asia-east1-docker.pkg.dev/sre-haw-ops/apps/sre-app
-    newTag: xxxxxxxxx
+    newTag: dd21a392748df0bc0c38d5a0057f611232bb7a99
