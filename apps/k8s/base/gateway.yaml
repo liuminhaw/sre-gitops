@@ -11,7 +11,7 @@ spec:
   # 綁定你預先保留的「全域」靜態 IP 名稱（GCE Address name）。
   addresses:
   - type: NamedAddress
-    value: gke-blueprint-example-ip
+    value: sre-gitops-ip
   listeners:
   - name: http
     protocol: HTTP
