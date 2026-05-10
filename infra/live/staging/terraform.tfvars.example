@@ -1,0 +1,48 @@
+project_id   = "your-gcp-project-id"
+network_name = "sre-gitops"
+region       = "asia-east1"
+
+nat_ip_count = 0
+
+subnets = [
+  {
+    subnet_name           = "apps"
+    subnet_ip             = "10.10.0.0/22"
+    subnet_region         = "asia-east1"
+    subnet_private_access = true
+    description           = "Applications subnet"
+  }
+]
+secondary_ranges = {
+  "apps" = [
+    {
+      range_name    = "gke-services"
+      ip_cidr_range = "10.20.0.0/20"
+    },
+    {
+      range_name    = "gke-pods"
+      ip_cidr_range = "10.30.0.0/17"
+    }
+  ]
+}
+
+maps_config = {
+  "app-certs-map" = { description = "application certificates map" }
+}
+domains_config = {
+  "example.your-domain.dev" = {
+    target_map_key  = "app-certs-map"
+    enable_wildcard = false
+    dns_zone_name   = null
+  }
+}
+
+gke_subnet                        = "apps"
+gke_services_secondary_range_name = "gke-services"
+gke_pods_secondary_range_name     = "gke-pods"
+gke_cluster_name                  = "sre-gitops"
+gke_location_type                 = "zonal"
+gke_zone                          = "asia-east1-a"
+gke_master_ipv4_cidr_block        = "172.30.1.0/28"
+gke_node_machine_type             = "e2-small"
+gke_service_account_email         = "gke-sre-gitops-sa@your-gcp-project-id.iam.gserviceaccount.com"

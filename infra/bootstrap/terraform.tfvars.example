@@ -1,0 +1,15 @@
+project_id           = "your-bootstrap-project-id"
+billing_account_id   = "000000-000000-000000"
+region               = "asia-east1"
+tf_state_bucket_name = "your-terraform-state-bucket"
+sre_projects = {
+  "your-dev-project-id" = {
+    # org_id    = "123456789012"
+    # folder_id = "folders/123456789012"
+  }
+  "your-staging-project-id" = {}
+  "your-prod-project-id" = {}
+}
+github_owner = "your-github-owner"
+github_repo  = "your-github-repo"
+gke_cluster_name = "sre-gitops"
