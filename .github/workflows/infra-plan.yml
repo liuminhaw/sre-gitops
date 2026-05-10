@@ -34,6 +34,17 @@ jobs:
         with:
           terraform_version: 1.14.9
 
+      - name: Render Terraform tfvars from variable (${{ matrix.env }})
+        working-directory: infra/live/${{ matrix.env }}
+        env:
+          TERRAFORM_TFVARS: ${{ vars.TERRAFORM_TFVARS }}
+        run: |
+          test -n "${TERRAFORM_TFVARS}" || {
+            echo "Missing TERRAFORM_TFVARS variable for environment '${{ matrix.env }}'" >&2
+            exit 1
+          }
+          printf '%s\n' "${TERRAFORM_TFVARS}" > github.auto.tfvars
+
       - name: Terraform init/plan (${{ matrix.env }})
         working-directory: infra/live/${{ matrix.env }}
         run: |
