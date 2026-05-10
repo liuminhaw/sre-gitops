@@ -1,0 +1,10 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: nginx-gateway
+  annotations:
+    networking.gke.io/certmap: "app-certs-map"
+spec:
+  addresses:
+    - type: NamedAddress
+      value: "gke-sre-gitops-ip"
